@@ -2,11 +2,13 @@ from models.modeltemplate import ModelTemplate
 
 from hyperopt import hp, tpe, Trials, fmin
 import xgboost as xgb
+import pandas as pd
 from sklearn.metrics import mean_squared_error as mse
 from IPython.display import clear_output
 
 
 class Xgboost(ModelTemplate):
+    best_params = None 
     
     def __init__(self, target, features, data) -> None:
         super().__init__(target, features, data)
@@ -53,8 +55,15 @@ class Xgboost(ModelTemplate):
             'reg_lambda': 0.5229731131689913, 
             'subsample': 0.7419233298225673}
         ):
+        if self.best_params:
+            params = self.best_params
         dtrain = xgb.DMatrix(self.X_train, label=self.y_train)
         dtest = xgb.DMatrix(self.X_test, label=self.y_test)
-        bst = xgb.train(params, dtrain, num_boost_round=1000, evals=[(dtest, 'eval')], early_stopping_rounds=20)
-        self.y_pred = bst.predict(dtest)
+        self.model = xgb.train(params, dtrain, num_boost_round=1000, evals=[(dtest, 'eval')], early_stopping_rounds=20)
+        self.y_pred = self.model.predict(dtest)
         clear_output()
+        
+    def feature_importance(self):
+        fi = pd.DataFrame(self.model.get_score(importance_type='gain').items(), columns=['feature', 'importance'])
+        fi = fi.sort_values('importance', ascending=False)
+        return fi

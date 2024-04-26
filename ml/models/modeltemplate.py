@@ -1,3 +1,4 @@
+from pathlib import Path
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from sklearn.tree import DecisionTreeRegressor
@@ -12,7 +13,7 @@ class ModelTemplate:
     def __init__(self, target, features, data) -> None:
         self.target = target
         self.features = features
-        self.data = data.dropna(subset=[target, 'marketval_-1']).fillna(0)
+        self.data = data.dropna(subset=[target, 'marketval_-1', 'height_-1']).fillna(0)
         self.X, self.y = self.data[features], self.data[target]
 
         
@@ -28,17 +29,17 @@ class ModelTemplate:
         self.scaler_y_train = StandardScaler()
         self.scaler_X_test = StandardScaler()
         self.scaler_y_test = StandardScaler()
-        self.X_train = self.scaler_X_train.fit_transform(self.X_train)
-        self.y_train = self.scaler_y_train.fit_transform(self.y_train.values.reshape(-1, 1)).reshape(-1)
-        self.X_test = self.scaler_X_test.fit_transform(self.X_test)
-        self.y_test = self.scaler_y_test.fit_transform(self.y_test.values.reshape(-1, 1)).reshape(-1)
+        self.X_train = pd.DataFrame(self.scaler_X_train.fit_transform(self.X_train), columns=self.features)
+        self.y_train = pd.Series(self.scaler_y_train.fit_transform(self.y_train.values.reshape(-1, 1)).reshape(-1), name=self.target)
+        self.X_test = pd.DataFrame(self.scaler_X_test.fit_transform(self.X_test), columns=self.features)
+        self.y_test = pd.Series(self.scaler_y_test.fit_transform(self.y_test.values.reshape(-1, 1)).reshape(-1), name=self.target)
     
     def inverse_scale(self):
         self.X_test = pd.DataFrame(self.scaler_X_test.inverse_transform(self.X_test), columns=self.features, index=self.__indices['test'])
         self.X_train = pd.DataFrame(self.scaler_X_test.inverse_transform(self.X_train), columns=self.features, index=self.__indices['train'])
-        self.y_train = pd.Series(self.scaler_y_train.inverse_transform(self.y_train.reshape(-1, 1)).reshape(-1), name=self.target, index=self.__indices['train'])
-        self.y_test = pd.Series(self.scaler_y_test.inverse_transform(self.y_test.reshape(-1, 1)).reshape(-1), name=self.target, index=self.__indices['test'])
-        self.y_pred = pd.Series(self.scaler_y_test.inverse_transform(self.y_pred.reshape(-1, 1)).reshape(-1), name=self.target+'_pred', index=self.__indices['test'])
+        self.y_train = pd.Series(self.scaler_y_train.inverse_transform(self.y_train.to_frame()).reshape(-1), name=self.target, index=self.__indices['train'])
+        self.y_test = pd.Series(self.scaler_y_test.inverse_transform(self.y_test.to_frame()).reshape(-1), name=self.target, index=self.__indices['test'])
+        self.y_pred = pd.Series(self.scaler_y_test.inverse_transform(self.y_pred.reshape(1, -1)).reshape(-1), name=self.target+'_pred', index=self.__indices['test'])
 
         
     def mae(self):
@@ -57,11 +58,14 @@ class ModelTemplate:
         
     def train(self):
         raise NotImplementedError
+    
+    def feature_importance(self):
+        raise NotImplementedError
         
     def plot_predictions(self):        
         fig = make_subplots(rows=3, cols=1)
         
-        x, y = self.y_test, abs(self.y_pred - self.y_test)
+        x, y = self.y_test, self.y_pred
         fig.add_trace(go.Scatter(
             x = x, 
             y = y, 
@@ -106,15 +110,43 @@ class ModelTemplate:
         fig.update_layout(
             width = 1000,
             height = 800,
-            title = 'Error distribution'
+            title = 'Model results',
+            xaxis1 = dict(title_text='Market value, Euro'),
+            xaxis2 = dict(title_text='Market value, Euro'),
+            xaxis3 = dict(title_text='Market value, Euro'),
+            yaxis1 = dict(title_text='Euro'),
+            yaxis2 = dict(title_text='Euro'),
+            yaxis3 = dict(title_text='PPT'),
         )
         fig.show()
         
     def top_n_predictions(self, n, criteria='error', worst=False):
         player_info_cols = ['name', 'age', 'season', 'country_from', 'league_from', 'club_from',
-                            'country_to', 'league_to', 'club_to', 'window', 'fee', 'loan']
+                            'country_to', 'league_to', 'club_to', 'window', 'marketval_-1', 'marketval_0', 'fee', 'loan']
         preds = pd.concat([self.data.loc[self.__indices['test'], player_info_cols], self.y_test, self.y_pred], axis=1)
+        preds.season = preds.season.map({
+            0: '19/20',
+            1: '20/21',
+            2: '21/22',
+            3: '22/23',
+            4: '23/24'
+        })
         preds['error'] = abs(self.y_pred - self.y_test)
+        self.predictions = preds
         preds = preds.sort_values('error', ascending = not worst)
         return preds.head(n)
+    
+    
+    def calculate_effectiveness(self):
+        inflation = pd.read_csv('/Users/timurkambachekov/вышка/4 курс/вкр/project/prepped/inflation.csv')
+        age_coef = pd.read_csv('/Users/timurkambachekov/вышка/4 курс/вкр/project/prepped/age_coeffiecient.csv')
+        
+        inflation.inflation = inflation.inflation.shift(-1)
+        self.predictions = self.predictions.merge(age_coef, how='left', on='age').merge(inflation, how='left', on='season')
+        def effectiveness(row, marketval_0):
+            return ((row['age_coef'] * (1 + row['inflation']) ** -1 * row[marketval_0] - row['marketval_-1'] + (row['marketval_-1'] - row['fee']))) / (2 * row['marketval_-1'])  
+        
+        self.predictions['eff_true'] = self.predictions.apply(lambda x: effectiveness(x,'marketval_0'), axis=1).iloc[:, 1:]
+        self.predictions['eff_pred'] = self.predictions.apply(lambda x: effectiveness(x,'marketval_0_pred'), axis=1)
+
         

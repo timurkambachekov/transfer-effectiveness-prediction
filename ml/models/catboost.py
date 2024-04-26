@@ -1,7 +1,7 @@
 from models.modeltemplate import ModelTemplate
 
 import optuna 
-import numpy as np
+import pandas as pd
 from catboost import CatBoostRegressor
 from sklearn.model_selection import cross_val_score
 from sklearn.metrics import mean_squared_error as mse
@@ -10,12 +10,11 @@ from IPython.display import clear_output
 
 class CatBoost(ModelTemplate):
     best_params = {
-        "iterations": 1000,
-        "learning_rate": 0.01,
-        "depth": 5,
-        "subsample": 1,
-        "colsample_bylevel": 1,
-        "min_data_in_leaf": 10,
+        'learning_rate': 0.05351645512700564,
+        'depth': 4,
+        'subsample': 0.4307654665570743,
+        'colsample_bylevel': 0.7605341788481008,
+        'min_data_in_leaf': 35
     }
     
     def __init__(self, target, features, data) -> None:
@@ -49,4 +48,10 @@ class CatBoost(ModelTemplate):
         m = CatBoostRegressor(**self.best_params)
         m.fit(self.X_train, self.y_train)
         self.y_pred = m.predict(self.X_test)
+        self.model = m
         clear_output()
+        
+    def feature_importance(self):
+        fi = pd.DataFrame(self.model.get_score(importance_type='gain').items(), columns=['feature', 'importance'])
+        fi = fi.sort_values('importance', ascending=False)
+        return fi

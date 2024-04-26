@@ -1,5 +1,6 @@
 import pandas as pd
 from sklearn.preprocessing import OrdinalEncoder
+from sklearn.mixture import GaussianMixture
 
 class TransfersDataset:
     
@@ -23,6 +24,15 @@ class TransfersDataset:
                         x[j] = 0  
             mapping.append(x)
         self.data = self.data.join(pd.DataFrame(mapping).add_prefix('pos'), self.data.index)
+        
+    def assign_clusters(self, X):
+        gmm = GaussianMixture(n_components=4, covariance_type='diag', random_state=0)
+        gmm.fit(X)
+        self.labels = gmm.predict(X) 
+        
+    def filter_cluster(self, cluster):
+        self.data = self.data.iloc[self.labels == cluster]
+        
         
     def filter_postion(self, pos):
         position_mapping = dict(

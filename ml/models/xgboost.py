@@ -2,46 +2,65 @@ from models.modeltemplate import ModelTemplate
 
 from hyperopt import hp, tpe, Trials, fmin
 import xgboost as xgb
+import optuna
 import pandas as pd
 from sklearn.metrics import mean_squared_error as mse
 from IPython.display import clear_output
 
 
 class Xgboost(ModelTemplate):
-    best_params = None 
+    default_params = {
+        'verbosity': 0
+    }
+    best_params = {
+        'max_depth': 93,
+        'learning_rate': 0.09928429023652342,
+        'n_estimators': 473,
+        'subsample': 0.9531552354359136,
+        'colsample_bytree': 0.7346644282110879,
+        'gamma': 0.2910912709165702,
+        'reg_alpha': 0.08111455203904866,
+        'reg_lambda': 0.7428293688241424,
+        'verbosity': 0
+    } 
     
-    def __init__(self, target, features, data) -> None:
-        super().__init__(target, features, data)
-        
+    def __init__(self, data, features=None, feature_selection=False, full_feature_set=False) -> None:
+        super().__init__(data, features, full_feature_set)
+        if feature_selection:
+            self.model = xgb.XGBRegressor(**self.default_params)
+        elif self.best_params:
+            self.model = xgb.XGBRegressor(**self.best_params)
+        else:
+            self.model = xgb.XGBRegressor()
+            
+            
     def tune_hp(self):
-        space = {
-            'max_depth': hp.choice('max_depth', range(31, 100)),
-            'learning_rate': hp.uniform('learning_rate', 0.01, 0.3),
-            'n_estimators': hp.choice('n_estimators', range(100, 1500, 100)),
-            'subsample': hp.uniform('subsample', 0.6, 1.0),
-            'colsample_bytree': hp.uniform('colsample_bytree', 0.6, 1.0),
-            'gamma': hp.uniform('gamma', 0.0, 0.5),
-            'reg_alpha': hp.uniform('reg_alpha', 0.0, 1.0),
-            'reg_lambda': hp.uniform('reg_lambda', 0.0, 1.0)
-        }
+        
+        optuna.logging.set_verbosity(optuna.logging.WARNING)
+        def objective(trial):
+            params = {
+                'max_depth': trial.suggest_int('max_depth', 3, 200),
+                'learning_rate': trial.suggest_float('learning_rate', 0.001, 0.1),
+                'n_estimators': trial.suggest_int('n_estimators', 100, 3000),
+                'subsample': trial.suggest_float('subsample', 0.6, 1.0),
+                'colsample_bytree': trial.suggest_float('colsample_bytree', 0.6, 1.0),
+                'gamma': trial.suggest_float('gamma', 0.0, 0.5),
+                'reg_alpha': trial.suggest_float('reg_alpha', 0.0, 10.0),
+                'reg_lambda': trial.suggest_float('reg_lambda', 0.0, 10.0),
+                'verbosity': 0
+            }
+            dtrain = xgb.DMatrix(self.X_train, label=self.y_train)
+            dtest = xgb.DMatrix(self.X_test, label=self.y_test)
+            bst = xgb.train(params, dtrain)
+            preds = bst.predict(dtest)
+            rmse = mse(self.y_test, preds, squared=False)  # RMSE
+            return rmse
+        # Create a study object and optimize the objective function
+        study = optuna.create_study(direction='minimize')
+        study.optimize(objective, n_trials=50, show_progress_bar=True)
 
-        # Define objective function to minimize (in this case, mean squared error)
-        def objective(params):
-            clf = xgb.XGBRegressor(**params)
-            clf.fit(self.X_train, self.y_train)
-            y_pred = clf.predict(self.X_test)
-            return mse(self.y_test, y_pred)
-
-        # Perform hyperparameter optimization
-        trials = Trials()
-        best = fmin(fn=objective,
-                    space=space,
-                    algo=tpe.suggest,
-                    max_evals=50,  # Number of iterations
-                    trials=trials)
-
-        print("Best parameters:", best)
-        self.best_params = best
+        print("Best parameters:", study.best_params)
+        self.best_params = study.best_params
         
     def train(
         self, 
@@ -59,11 +78,11 @@ class Xgboost(ModelTemplate):
             params = self.best_params
         dtrain = xgb.DMatrix(self.X_train, label=self.y_train)
         dtest = xgb.DMatrix(self.X_test, label=self.y_test)
-        self.model = xgb.train(params, dtrain, num_boost_round=1000, evals=[(dtest, 'eval')], early_stopping_rounds=20)
+        self.model = xgb.train(params, dtrain, num_boost_round=10000, evals=[(dtest, 'eval')], early_stopping_rounds=50, verbose_eval=0)
         self.y_pred = self.model.predict(dtest)
-        clear_output()
         
-    def feature_importance(self):
+    def feature_importance(self, log_name):
         fi = pd.DataFrame(self.model.get_score(importance_type='gain').items(), columns=['feature', 'importance'])
         fi = fi.sort_values('importance', ascending=False)
+        fi.to_csv(f'feature_importance_{log_name}.csv', index=False)
         return fi

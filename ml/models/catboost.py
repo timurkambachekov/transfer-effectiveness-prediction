@@ -10,21 +10,33 @@ from IPython.display import clear_output
 
 class CatBoost(ModelTemplate):
     best_params = {
-        'learning_rate': 0.05351645512700564,
-        'depth': 4,
-        'subsample': 0.4307654665570743,
-        'colsample_bylevel': 0.7605341788481008,
-        'min_data_in_leaf': 35
+        'iterations': 4441,
+        'learning_rate': 0.035725014467313174,
+        'depth': 5,
+        'subsample': 0.7756176221984215,
+        'colsample_bylevel': 0.9114327325766978,
+        'min_data_in_leaf': 4,
+        'random_seed': 42
+    }
+    default_params = {
+        'iterations': 300,
+        'random_seed': 42,
+        'silent': True
     }
     
-    def __init__(self, target, features, data) -> None:
-        super().__init__(target, features, data)
+    def __init__(self, data, features=None, feature_selection=False, full_feature_set=False) -> None:
+        super().__init__(data, features, full_feature_set)
+        if feature_selection:
+            self.model = CatBoostRegressor(**self.default_params)
+        else:
+            self.model = CatBoostRegressor(**self.best_params)
         
     def tune_hp(self):
+        optuna.logging.set_verbosity(optuna.logging.WARNING)
         def objective(trial):
             params = {
-                "iterations": 1000,
-                "learning_rate": trial.suggest_float("learning_rate", 1e-3, 0.1, log=True),
+                "iterations": trial.suggest_int("iterations", 200, 5000),
+                "learning_rate": trial.suggest_float("learning_rate", 1e-3, 0.1),
                 "depth": trial.suggest_int("depth", 1, 10),
                 "subsample": trial.suggest_float("subsample", 0.05, 1.0),
                 "colsample_bylevel": trial.suggest_float("colsample_bylevel", 0.05, 1.0),
@@ -32,7 +44,7 @@ class CatBoost(ModelTemplate):
             }
 
             cb = CatBoostRegressor(**params, silent=True)
-            cb.fit(self.X_train, self.y_train, eval_set=(self.X_test, self.y_test), early_stopping_rounds=50, verbose=False)
+            cb.fit(self.X_train, self.y_train, eval_set=(self.X_test, self.y_test), early_stopping_rounds=50, silent=True)
             val_score = cb.best_score_['validation']['RMSE']
             return val_score
 
@@ -46,10 +58,9 @@ class CatBoost(ModelTemplate):
     def train(
         self):
         m = CatBoostRegressor(**self.best_params)
-        m.fit(self.X_train, self.y_train)
+        m.fit(self.X_train, self.y_train, silent=True)
         self.y_pred = m.predict(self.X_test)
         self.model = m
-        clear_output()
         
     def feature_importance(self):
         fi = pd.DataFrame(self.model.get_score(importance_type='gain').items(), columns=['feature', 'importance'])

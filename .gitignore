@@ -3,3 +3,9 @@ archive-4/
 raw_data/
 
 prepped/
+
+wyscout/
+
+*.csv
+
+*.xlsx
